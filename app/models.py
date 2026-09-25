@@ -1,13 +1,16 @@
 ﻿import enum
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy import (
+    CheckConstraint,
     DateTime,
     Enum,
     ForeignKey,
     Numeric,
     String,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -67,3 +70,22 @@ class DiagnosticTest(TimestampMixin, Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(200), unique=True)
     description: Mapped[str | None] = mapped_column(Text)
+
+
+class CentreTest(TimestampMixin, Base):
+    """A test offered by a centre, at that centre price."""
+
+    __tablename__ = "centre_tests"
+    __table_args__ = (
+        UniqueConstraint("centre_id", "test_id", name="uq_centre_test"),
+        CheckConstraint("price > 0", name="ck_centre_test_price_positive"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    centre_id: Mapped[int] = mapped_column(ForeignKey("centres.id", ondelete="CASCADE"))
+    test_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_tests.id", ondelete="RESTRICT"), index=True)
+    price: Mapped[Decimal] = mapped_column(Money)
+    is_active: Mapped[bool] = mapped_column(default=True, server_default=text("true"))
+
+    centre: Mapped[Centre] = relationship(back_populates="offerings")
+    test: Mapped[DiagnosticTest] = relationship()
