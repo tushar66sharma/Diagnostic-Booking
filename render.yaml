@@ -1,0 +1,34 @@
+# Render Blueprint: creates the Postgres database and the API web service together.
+# Usage: Render dashboard -> New -> Blueprint -> pick this repository. See docs/DEPLOY_RENDER.md.
+databases:
+  - name: eve-bookings-db
+    plan: free
+    databaseName: eve_bookings
+    user: eve
+
+services:
+  - type: web
+    name: eve-bookings-api
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: eve-bookings-db
+          property: connectionString
+      - key: JWT_SECRET
+        generateValue: true
+      - key: WEBHOOK_SECRET
+        generateValue: true
+      # Render's proxy sets X-Forwarded-For; trust it so rate limiting sees real client IPs.
+      - key: FORWARDED_ALLOW_IPS
+        value: "*"
+      # Free instances have no shell, so load demo data on start (the seed script is idempotent).
+      - key: SEED_ON_START
+        value: "true"
+      - key: SEED_ADMIN_PASSWORD
+        sync: false # asked for in the dashboard when the Blueprint is created
+      - key: LOG_LEVEL
+        value: INFO
