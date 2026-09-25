@@ -1,0 +1,34 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: eve
+      POSTGRES_PASSWORD: eve_password
+      POSTGRES_DB: eve_bookings
+    ports:
+      - "5433:5432" # 5433 on the host to avoid clashing with a locally installed Postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/init-test-db.sql:/docker-entrypoint-initdb.d/init-test-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eve -d eve_bookings"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    environment:
+      DATABASE_URL: postgresql+psycopg://eve:eve_password@db:5432/eve_bookings
+      TEST_DATABASE_URL: postgresql+psycopg://eve:eve_password@db:5432/eve_test
+      JWT_SECRET: ${JWT_SECRET:-dev-only-jwt-secret-change-me-in-production-0123456789}
+      WEBHOOK_SECRET: ${WEBHOOK_SECRET:-dev-only-webhook-secret-change-me}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
