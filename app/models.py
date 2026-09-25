@@ -47,7 +47,7 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True)  # stored lower-cased
+    email: Mapped[str] = mapped_column(String(255), unique=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(120))
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
@@ -96,7 +96,6 @@ class CentreTest(TimestampMixin, Base):
 class Booking(TimestampMixin, Base):
     __tablename__ = "bookings"
     __table_args__ = (
-        # A booking can only reference a test the centre actually offers.
         ForeignKeyConstraint(
             ["centre_id", "test_id"],
             ["centre_tests.centre_id", "centre_tests.test_id"],
@@ -104,7 +103,6 @@ class Booking(TimestampMixin, Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("amount > 0", name="ck_booking_amount_positive"),
-        # The same user cannot hold two live bookings for the same test/centre/slot.
         Index(
             "uq_booking_active_slot",
             "user_id", "centre_id", "test_id", "appointment_at",
@@ -118,7 +116,6 @@ class Booking(TimestampMixin, Base):
     centre_id: Mapped[int] = mapped_column(ForeignKey("centres.id"))
     test_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_tests.id"))
     appointment_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
-    # Snapshot of the centre price at booking time; later price changes do not affect it.
     amount: Mapped[Decimal] = mapped_column(Money)
     status: Mapped[BookingStatus] = mapped_column(
         Enum(BookingStatus, name="booking_status"), default=BookingStatus.PENDING, index=True
@@ -136,3 +133,30 @@ class Booking(TimestampMixin, Base):
     @property
     def test_name(self) -> str:
         return self.test.name
+
+
+class Payment(TimestampMixin, Base):
+    """One attempt to pay for a booking. A booking may have several (e.g. failed, then retried)."""
+
+    __tablename__ = "payments"
+    __table_args__ = (
+        CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
+        Index("uq_payment_in_flight", "booking_id", unique=True, postgresql_where=text("status = ''PENDING''")),
+        Index("uq_payment_success", "booking_id", unique=True, postgresql_where=text("status = ''SUCCESS''")),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    booking_id: Mapped[int] = mapped_column(ForeignKey("bookings.id", ondelete="CASCADE"), index=True)
+    amount: Mapped[Decimal] = mapped_column(Money)
+    status: Mapped[PaymentStatus] = mapped_column(
+        Enum(PaymentStatus, name="payment_status"), default=PaymentStatus.PENDING
+    )
+    provider_ref: Mapped[str] = mapped_column(String(64), unique=True)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
+    refund_required: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+
+    booking: Mapped[Booking] = relationship(back_populates="payments")
+
+    @property
+    def booking_status(self) -> BookingStatus:
+        return self.booking.status
