@@ -16,6 +16,7 @@ from sqlalchemy import (
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
@@ -47,7 +48,7 @@ class User(TimestampMixin, Base):
     __tablename__ = "users"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True)
+    email: Mapped[str] = mapped_column(String(255), unique=True)  # stored lower-cased
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(120))
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
@@ -75,7 +76,7 @@ class DiagnosticTest(TimestampMixin, Base):
 
 
 class CentreTest(TimestampMixin, Base):
-    """A test offered by a centre, at that centre price."""
+    """A test offered by a centre, at that centre's price."""
 
     __tablename__ = "centre_tests"
     __table_args__ = (
@@ -96,6 +97,7 @@ class CentreTest(TimestampMixin, Base):
 class Booking(TimestampMixin, Base):
     __tablename__ = "bookings"
     __table_args__ = (
+        # A booking can only reference a test the centre actually offers.
         ForeignKeyConstraint(
             ["centre_id", "test_id"],
             ["centre_tests.centre_id", "centre_tests.test_id"],
@@ -103,6 +105,7 @@ class Booking(TimestampMixin, Base):
             ondelete="RESTRICT",
         ),
         CheckConstraint("amount > 0", name="ck_booking_amount_positive"),
+        # The same user cannot hold two live bookings for the same test/centre/slot.
         Index(
             "uq_booking_active_slot",
             "user_id", "centre_id", "test_id", "appointment_at",
@@ -116,6 +119,7 @@ class Booking(TimestampMixin, Base):
     centre_id: Mapped[int] = mapped_column(ForeignKey("centres.id"))
     test_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_tests.id"))
     appointment_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Snapshot of the centre's price at booking time; later price changes do not affect it.
     amount: Mapped[Decimal] = mapped_column(Money)
     status: Mapped[BookingStatus] = mapped_column(
         Enum(BookingStatus, name="booking_status"), default=BookingStatus.PENDING, index=True
@@ -141,6 +145,7 @@ class Payment(TimestampMixin, Base):
     __tablename__ = "payments"
     __table_args__ = (
         CheckConstraint("amount > 0", name="ck_payment_amount_positive"),
+        # At most one in-flight attempt and at most one successful payment per booking.
         Index("uq_payment_in_flight", "booking_id", unique=True, postgresql_where=text("status = ''PENDING''")),
         Index("uq_payment_success", "booking_id", unique=True, postgresql_where=text("status = ''SUCCESS''")),
     )
@@ -151,8 +156,11 @@ class Payment(TimestampMixin, Base):
     status: Mapped[PaymentStatus] = mapped_column(
         Enum(PaymentStatus, name="payment_status"), default=PaymentStatus.PENDING
     )
+    # Reference assigned by the payment provider; webhooks identify the payment by it.
     provider_ref: Mapped[str] = mapped_column(String(64), unique=True)
+    # Client-supplied key that makes POST /payments/ safe to retry.
     idempotency_key: Mapped[str | None] = mapped_column(String(128), unique=True)
+    # Money was taken but the booking cannot use it (e.g. booking cancelled) -> refund needed.
     refund_required: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
 
     booking: Mapped[Booking] = relationship(back_populates="payments")
@@ -160,3 +168,16 @@ class Payment(TimestampMixin, Base):
     @property
     def booking_status(self) -> BookingStatus:
         return self.booking.status
+
+
+class WebhookEvent(Base):
+    """Every webhook event we accepted. The unique event_id is what makes the webhook idempotent."""
+
+    __tablename__ = "webhook_events"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    event_id: Mapped[str] = mapped_column(String(128), unique=True)
+    provider_ref: Mapped[str] = mapped_column(String(64), index=True)
+    payload: Mapped[dict] = mapped_column(JSONB)
+    result: Mapped[str | None] = mapped_column(String(32))
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
