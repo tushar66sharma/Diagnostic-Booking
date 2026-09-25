@@ -7,6 +7,8 @@ from sqlalchemy import (
     DateTime,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
+    Index,
     Numeric,
     String,
     Text,
@@ -89,3 +91,48 @@ class CentreTest(TimestampMixin, Base):
 
     centre: Mapped[Centre] = relationship(back_populates="offerings")
     test: Mapped[DiagnosticTest] = relationship()
+
+
+class Booking(TimestampMixin, Base):
+    __tablename__ = "bookings"
+    __table_args__ = (
+        # A booking can only reference a test the centre actually offers.
+        ForeignKeyConstraint(
+            ["centre_id", "test_id"],
+            ["centre_tests.centre_id", "centre_tests.test_id"],
+            name="fk_booking_centre_test",
+            ondelete="RESTRICT",
+        ),
+        CheckConstraint("amount > 0", name="ck_booking_amount_positive"),
+        # The same user cannot hold two live bookings for the same test/centre/slot.
+        Index(
+            "uq_booking_active_slot",
+            "user_id", "centre_id", "test_id", "appointment_at",
+            unique=True,
+            postgresql_where=text("status IN (''PENDING'', ''CONFIRMED'')"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    centre_id: Mapped[int] = mapped_column(ForeignKey("centres.id"))
+    test_id: Mapped[int] = mapped_column(ForeignKey("diagnostic_tests.id"))
+    appointment_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Snapshot of the centre price at booking time; later price changes do not affect it.
+    amount: Mapped[Decimal] = mapped_column(Money)
+    status: Mapped[BookingStatus] = mapped_column(
+        Enum(BookingStatus, name="booking_status"), default=BookingStatus.PENDING, index=True
+    )
+
+    user: Mapped[User] = relationship()
+    centre: Mapped[Centre] = relationship()
+    test: Mapped[DiagnosticTest] = relationship()
+    payments: Mapped[list["Payment"]] = relationship(back_populates="booking", order_by="Payment.id")
+
+    @property
+    def centre_name(self) -> str:
+        return self.centre.name
+
+    @property
+    def test_name(self) -> str:
+        return self.test.name
