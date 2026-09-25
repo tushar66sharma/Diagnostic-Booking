@@ -4,12 +4,14 @@ from datetime import datetime
 from sqlalchemy import (
     DateTime,
     Enum,
+    ForeignKey,
     Numeric,
     String,
+    Text,
     func,
     text,
 )
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db import Base
 
@@ -44,3 +46,24 @@ class User(TimestampMixin, Base):
     password_hash: Mapped[str] = mapped_column(String(255))
     full_name: Mapped[str] = mapped_column(String(120))
     is_admin: Mapped[bool] = mapped_column(default=False, server_default=text("false"))
+
+
+class Centre(TimestampMixin, Base):
+    __tablename__ = "centres"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200))
+    city: Mapped[str] = mapped_column(String(100), index=True)
+    address: Mapped[str] = mapped_column(Text)
+
+    offerings: Mapped[list["CentreTest"]] = relationship(back_populates="centre")
+
+
+class DiagnosticTest(TimestampMixin, Base):
+    """Catalogue entry (e.g. "Complete Blood Count"). Price is per centre, see CentreTest."""
+
+    __tablename__ = "diagnostic_tests"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(200), unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
